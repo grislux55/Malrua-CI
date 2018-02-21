@@ -723,12 +723,6 @@ static ktime_t tick_nohz_next_event(struct tick_sched *ts, int cpu)
 	    (tick_do_timer_cpu != TICK_DO_TIMER_NONE || !ts->do_timer_last))
 		delta = KTIME_MAX;
 
-#ifdef CONFIG_NO_HZ_FULL
-	/* Limit the tick delta to the maximum scheduler deferment */
-	if (!ts->inidle)
-		delta = min(delta, scheduler_tick_max_deferment());
-#endif
-
 	/* Calculate the next expiry time */
 	if (delta < (KTIME_MAX - basemono))
 		expires = basemono + delta;
