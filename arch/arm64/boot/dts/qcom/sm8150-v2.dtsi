@@ -31,6 +31,7 @@
 
 &clock_cpucc {
 	qcom,cpufreq-table-0 =
+		<1382400>,
 		<1785600>;
 
 	qcom,cpufreq-table-4 =
