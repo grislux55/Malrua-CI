@@ -128,3 +128,6 @@ kernel/configs/android-*.cfg
 
 # Drone CI
 !.drone.yml
+
+# AnyKernel
+!ak3/**
