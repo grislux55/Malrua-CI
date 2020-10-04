@@ -92,6 +92,7 @@
 #define BQ27411_REG_AI                  0x10
 #define BQ27411_REG_SOC                 0x1c
 #define BQ27411_REG_HEALTH              0x20
+
 #define BQ27411_REG_FCC                 0xE
 
 #define CONTROL_CMD                 0x00
@@ -979,7 +980,6 @@ static int bq27541_get_batt_full_chg_capacity(void)
 {
 	return bq27541_full_chg_capacity(bq27541_di);
 }
-
 
 static int bq27541_get_batt_health(void)
 {
