@@ -59,14 +59,22 @@ install() {
 
   case "$ZIPFILE" in
   *BATTERY*)
-    ui_print " " "Removing limit to learn battery capacity..."
-    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=1"
+    ui_print " " "Removing limit to learn battery capacity...";
+    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=1";
     ;;
   *)
-    ui_print " " "Keeping the limit for learning battery capacity..."
-    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=0"
+    ui_print " " "Keeping the limit for learning battery capacity...";
+    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=0";
     ;;
   esac
+
+  if [ -d $ramdisk/.backup ]; then
+    mv $home/overlay.d $ramdisk/overlay.d;
+    chmod -R 750 $ramdisk/overlay.d/*;
+    chown -R root:root $ramdisk/overlay.d/*;
+    chmod -R 755 $ramdisk/overlay.d/sbin/*;
+    chown -R root:root $ramdisk/overlay.d/sbin/*;
+  fi
 
   # Install the boot image
   write_boot;
