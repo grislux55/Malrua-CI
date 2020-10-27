@@ -57,6 +57,17 @@ install() {
     mv $home/dtb $home/split_img/;
   fi
 
+  case "$ZIPFILE" in
+  *BATTERY*)
+    ui_print " " "Removing limit to learn battery capacity..."
+    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=1"
+    ;;
+  *)
+    ui_print " " "Keeping the limit for learning battery capacity..."
+    patch_cmdline "battery_capacity.remove_op_capacity" "battery_capacity.remove_op_capacity=0"
+    ;;
+  esac
+
   # Install the boot image
   write_boot;
 }
