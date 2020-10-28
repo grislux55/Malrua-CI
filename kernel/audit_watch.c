@@ -274,7 +274,7 @@ static void audit_update_watch(struct audit_parent *parent,
 		/* If the update involves invalidating rules, do the inode-based
 		 * filtering now, so we don't omit records. */
 		if (invalidating && !audit_dummy_context())
-			audit_filter_inodes(current, current->audit_context);
+			audit_filter_inodes(current, audit_context());
 
 		/* updating ino will likely change which audit_hash_list we
 		 * are on so we need a new watch for the new list */
@@ -315,8 +315,6 @@ static void audit_update_watch(struct audit_parent *parent,
 			}
 			if (oentry->rule.exe)
 				audit_remove_mark(oentry->rule.exe);
-
-			audit_watch_log_rule_change(r, owatch, "updated_rules");
 
 			call_rcu(&oentry->rcu, audit_free_rule_rcu);
 		}

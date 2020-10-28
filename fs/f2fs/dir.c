@@ -86,57 +86,43 @@ static struct f2fs_dir_entry *find_in_block(struct inode *dir,
 				struct page *dentry_page,
 				struct fscrypt_name *fname,
 				f2fs_hash_t namehash,
-				int *max_slots,
-				struct page **res_page)
+				int *max_slots)
 {
 	struct f2fs_dentry_block *dentry_blk;
-	struct f2fs_dir_entry *de;
 	struct f2fs_dentry_ptr d;
 
 	dentry_blk = (struct f2fs_dentry_block *)page_address(dentry_page);
 
 	make_dentry_ptr_block(dir, &d, dentry_blk);
-	de = f2fs_find_target_dentry(fname, namehash, max_slots, &d);
-	if (de)
-		*res_page = dentry_page;
-
-	return de;
+	return f2fs_find_target_dentry(fname, namehash, max_slots, &d);
 }
 
 #ifdef CONFIG_UNICODE
 /*
  * Test whether a case-insensitive directory entry matches the filename
  * being searched for.
- *
- * Returns: 0 if the directory entry matches, more than 0 if it
- * doesn't match or less than zero on error.
  */
-int f2fs_ci_compare(const struct inode *parent, const struct qstr *name,
-				const struct qstr *entry, bool quick)
+static bool f2fs_match_ci_name(const struct inode *dir, const struct qstr *name,
+			       const struct qstr *entry, bool quick)
 {
-	const struct f2fs_sb_info *sbi = F2FS_SB(parent->i_sb);
+	const struct f2fs_sb_info *sbi = F2FS_SB(dir->i_sb);
 	const struct unicode_map *um = sbi->s_encoding;
-	int ret;
+	int res;
 
 	if (quick)
-		ret = utf8_strncasecmp_folded(um, name, entry);
+		res = utf8_strncasecmp_folded(um, name, entry);
 	else
-		ret = utf8_strncasecmp(um, name, entry);
-
-	if (ret < 0) {
-		/* Handle invalid character sequence as either an error
-		 * or as an opaque byte sequence.
+		res = utf8_strncasecmp(um, name, entry);
+	if (res < 0) {
+		/*
+		 * In strict mode, ignore invalid names.  In non-strict mode,
+		 * fall back to treating them as opaque byte sequences.
 		 */
-		if (f2fs_has_strict_mode(sbi))
-			return -EINVAL;
-
-		if (name->len != entry->len)
-			return 1;
-
-		return !!memcmp(name->name, entry->name, name->len);
+		if (f2fs_has_strict_mode(sbi) || name->len != entry->len)
+			return false;
+		return !memcmp(name->name, entry->name, name->len);
 	}
-
-	return ret;
+	return res == 0;
 }
 
 static void f2fs_fname_setup_ci_filename(struct inode *dir,
@@ -188,10 +174,10 @@ static inline bool f2fs_match_name(struct f2fs_dentry_ptr *d,
 		if (cf_str->name) {
 			struct qstr cf = {.name = cf_str->name,
 					  .len = cf_str->len};
-			return !f2fs_ci_compare(parent, &cf, &entry, true);
+			return f2fs_match_ci_name(parent, &cf, &entry, true);
 		}
-		return !f2fs_ci_compare(parent, fname->usr_fname, &entry,
-					false);
+		return f2fs_match_ci_name(parent, fname->usr_fname, &entry,
+					  false);
 	}
 #endif
 	if (fscrypt_match_name(fname, d->filename[bit_pos],
@@ -286,9 +272,11 @@ static struct f2fs_dir_entry *find_in_level(struct inode *dir,
 		}
 
 		de = find_in_block(dir, dentry_page, fname, namehash,
-							&max_slots, res_page);
-		if (de)
+							&max_slots);
+		if (de) {
+			*res_page = dentry_page;
 			break;
+		}
 
 		if (max_slots >= s)
 			room = true;
@@ -311,16 +299,15 @@ struct f2fs_dir_entry *__f2fs_find_entry(struct inode *dir,
 	unsigned int max_depth;
 	unsigned int level;
 
+	*res_page = NULL;
+
 	if (f2fs_has_inline_dentry(dir)) {
-		*res_page = NULL;
 		de = f2fs_find_in_inline_dir(dir, fname, res_page);
 		goto out;
 	}
 
-	if (npages == 0) {
-		*res_page = NULL;
+	if (npages == 0)
 		goto out;
-	}
 
 	max_depth = F2FS_I(dir)->i_current_depth;
 	if (unlikely(max_depth > MAX_DIR_HASH_DEPTH)) {
@@ -331,7 +318,6 @@ struct f2fs_dir_entry *__f2fs_find_entry(struct inode *dir,
 	}
 
 	for (level = 0; level < max_depth; level++) {
-		*res_page = NULL;
 		de = find_in_level(dir, level, fname, res_page);
 		if (de || IS_ERR(*res_page))
 			break;
@@ -749,7 +735,7 @@ int f2fs_do_add_link(struct inode *dir, const struct qstr *name,
 		return err;
 
 	/*
-	 * An immature stakable filesystem shows a race condition between lookup
+	 * An immature stackable filesystem shows a race condition between lookup
 	 * and create. If we have same task when doing lookup and create, it's
 	 * definitely fine as expected by VFS normally. Otherwise, let's just
 	 * verify on-disk dentry one more time, which guarantees filesystem
@@ -1080,17 +1066,41 @@ const struct file_operations f2fs_dir_operations = {
 static int f2fs_d_compare(const struct dentry *dentry, unsigned int len,
 			  const char *str, const struct qstr *name)
 {
-	struct qstr qstr = {.name = str, .len = len };
 	const struct dentry *parent = READ_ONCE(dentry->d_parent);
-	const struct inode *inode = READ_ONCE(parent->d_inode);
+	const struct inode *dir = READ_ONCE(parent->d_inode);
+	const struct f2fs_sb_info *sbi = F2FS_SB(dentry->d_sb);
+	struct qstr entry = QSTR_INIT(str, len);
+	char strbuf[DNAME_INLINE_LEN];
+	int res;
 
-	if (!inode || !IS_CASEFOLDED(inode)) {
-		if (len != name->len)
-			return -1;
-		return memcmp(str, name->name, len);
+	if (!dir || !IS_CASEFOLDED(dir))
+		goto fallback;
+
+	/*
+	 * If the dentry name is stored in-line, then it may be concurrently
+	 * modified by a rename.  If this happens, the VFS will eventually retry
+	 * the lookup, so it doesn't matter what ->d_compare() returns.
+	 * However, it's unsafe to call utf8_strncasecmp() with an unstable
+	 * string.  Therefore, we have to copy the name into a temporary buffer.
+	 */
+	if (len <= DNAME_INLINE_LEN - 1) {
+		memcpy(strbuf, str, len);
+		strbuf[len] = 0;
+		entry.name = strbuf;
+		/* prevent compiler from optimizing out the temporary buffer */
+		barrier();
 	}
 
-	return f2fs_ci_compare(inode, name, &qstr, false);
+	res = utf8_strncasecmp(sbi->s_encoding, name, &entry);
+	if (res >= 0)
+		return res;
+
+	if (f2fs_has_strict_mode(sbi))
+		return -EINVAL;
+fallback:
+	if (len != name->len)
+		return 1;
+	return !!memcmp(str, name->name, len);
 }
 
 static int f2fs_d_hash(const struct dentry *dentry, struct qstr *str)

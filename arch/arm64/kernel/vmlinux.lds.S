@@ -24,6 +24,13 @@ ENTRY(_text)
 
 jiffies = jiffies_64;
 
+
+#define HYPERVISOR_EXTABLE					\
+	. = ALIGN(SZ_8);					\
+	VMLINUX_SYMBOL(__start___kvm_ex_table) = .;		\
+	*(__kvm_ex_table)					\
+	VMLINUX_SYMBOL(__stop___kvm_ex_table) = .;
+
 #define HYPERVISOR_TEXT					\
 	/*						\
 	 * Align to 4 KB so that			\
@@ -39,6 +46,7 @@ jiffies = jiffies_64;
 	VMLINUX_SYMBOL(__hyp_idmap_text_end) = .;	\
 	VMLINUX_SYMBOL(__hyp_text_start) = .;		\
 	*(.hyp.text)					\
+	HYPERVISOR_EXTABLE				\
 	VMLINUX_SYMBOL(__hyp_text_end) = .;
 
 #define IDMAP_TEXT					\
@@ -164,7 +172,6 @@ SECTIONS
 		INIT_SETUP(16)
 		INIT_CALLS
 		CON_INITCALL
-		SECURITY_INITCALL
 		INIT_RAM_FS
 		*(.init.rodata.* .init.bss)	/* from the EFI stub */
 	}

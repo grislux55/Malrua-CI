@@ -504,6 +504,7 @@ static struct dentry *f2fs_lookup(struct inode *dir, struct dentry *dentry,
 			err = PTR_ERR(page);
 			goto out;
 		}
+		err = -ENOENT;
 		goto out_splice;
 	}
 
@@ -549,7 +550,7 @@ out_splice:
 #endif
 	new = d_splice_alias(inode, dentry);
 	err = PTR_ERR_OR_ZERO(new);
-	trace_f2fs_lookup_end(dir, dentry, ino, err);
+	trace_f2fs_lookup_end(dir, dentry, ino, !new ? -ENOENT : err);
 	return new;
 out_iput:
 	iput(inode);
@@ -564,19 +565,21 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *inode = d_inode(dentry);
 	struct f2fs_dir_entry *de;
 	struct page *page;
-	int err = -ENOENT;
+	int err;
 
 	trace_f2fs_unlink_enter(dir, dentry);
 
-	if (unlikely(f2fs_cp_error(sbi)))
-		return -EIO;
+	if (unlikely(f2fs_cp_error(sbi))) {
+		err = -EIO;
+		goto fail;
+	}
 
 	err = dquot_initialize(dir);
 	if (err)
-		return err;
+		goto fail;
 	err = dquot_initialize(inode);
 	if (err)
-		return err;
+		goto fail;
 
 	de = f2fs_find_entry(dir, &dentry->d_name, &page);
 	if (!de) {
@@ -599,7 +602,7 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	/* VFS negative dentries are incompatible with Encoding and
 	 * Case-insensitiveness. Eventually we'll want avoid
 	 * invalidating the dentries here, alongside with returning the
-	 * negative dentries at f2fs_lookup(), when it is  better
+	 * negative dentries at f2fs_lookup(), when it is better
 	 * supported by the VFS for the CI case.
 	 */
 	if (IS_CASEFOLDED(dir))
@@ -704,7 +707,7 @@ out_f2fs_handle_failed_inode:
 	f2fs_handle_failed_inode(inode);
 out_free_encrypted_link:
 	if (disk_link.name != (unsigned char *)symname)
-		kvfree(disk_link.name);
+		kfree(disk_link.name);
 	return err;
 }
 
@@ -1284,12 +1287,10 @@ static const char *f2fs_encrypted_get_link(struct dentry *dentry,
 }
 
 const struct inode_operations f2fs_encrypted_symlink_inode_operations = {
-	.get_link       = f2fs_encrypted_get_link,
+	.get_link	= f2fs_encrypted_get_link,
 	.getattr	= f2fs_getattr,
 	.setattr	= f2fs_setattr,
-#ifdef CONFIG_F2FS_FS_XATTR
 	.listxattr	= f2fs_listxattr,
-#endif
 };
 
 const struct inode_operations f2fs_dir_inode_operations = {
@@ -1307,27 +1308,21 @@ const struct inode_operations f2fs_dir_inode_operations = {
 	.setattr	= f2fs_setattr,
 	.get_acl	= f2fs_get_acl,
 	.set_acl	= f2fs_set_acl,
-#ifdef CONFIG_F2FS_FS_XATTR
 	.listxattr	= f2fs_listxattr,
-#endif
 	.fiemap		= f2fs_fiemap,
 };
 
 const struct inode_operations f2fs_symlink_inode_operations = {
-	.get_link       = f2fs_get_link,
+	.get_link	= f2fs_get_link,
 	.getattr	= f2fs_getattr,
 	.setattr	= f2fs_setattr,
-#ifdef CONFIG_F2FS_FS_XATTR
 	.listxattr	= f2fs_listxattr,
-#endif
 };
 
 const struct inode_operations f2fs_special_inode_operations = {
 	.getattr	= f2fs_getattr,
-	.setattr        = f2fs_setattr,
+	.setattr	= f2fs_setattr,
 	.get_acl	= f2fs_get_acl,
 	.set_acl	= f2fs_set_acl,
-#ifdef CONFIG_F2FS_FS_XATTR
 	.listxattr	= f2fs_listxattr,
-#endif
 };

@@ -379,7 +379,7 @@ int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 {
 	const struct usb_endpoint_descriptor *desc = dep->endpoint.desc;
 	struct dwc3		*dwc = dep->dwc;
-	u32			timeout = 3000;
+	u32			timeout = 5000;
 	u32			saved_config = 0;
 	u32			reg;
 
@@ -1613,6 +1613,9 @@ static int dwc3_gadget_ep_queue(struct usb_ep *ep, struct usb_request *request,
 	unsigned long			flags;
 
 	int				ret;
+
+	if (dwc3_gadget_is_suspended(dwc))
+		return -EAGAIN;
 
 	spin_lock_irqsave(&dwc->lock, flags);
 	ret = __dwc3_gadget_ep_queue(dep, req);

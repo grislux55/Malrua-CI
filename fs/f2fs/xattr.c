@@ -39,12 +39,12 @@ static void xattr_free(struct f2fs_sb_info *sbi, void *xattr_addr,
 	if (is_inline)
 		kmem_cache_free(sbi->inline_xattr_slab, xattr_addr);
 	else
-		kvfree(xattr_addr);
+		kfree(xattr_addr);
 }
 
 static int f2fs_xattr_generic_get(const struct xattr_handler *handler,
 		struct dentry *unused, struct inode *inode,
-		const char *name, void *buffer, size_t size)
+		const char *name, void *buffer, size_t size, int flags)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(inode->i_sb);
 
@@ -99,7 +99,7 @@ static bool f2fs_xattr_trusted_list(struct dentry *dentry)
 
 static int f2fs_xattr_advise_get(const struct xattr_handler *handler,
 		struct dentry *unused, struct inode *inode,
-		const char *name, void *buffer, size_t size)
+		const char *name, void *buffer, size_t size, int flags)
 {
 	if (buffer)
 		*((char *)buffer) = F2FS_I(inode)->i_advise;
@@ -175,8 +175,8 @@ const struct xattr_handler f2fs_xattr_trusted_handler = {
 const struct xattr_handler f2fs_xattr_advise_handler = {
 	.name	= F2FS_SYSTEM_ADVISE_NAME,
 	.flags	= F2FS_XATTR_INDEX_ADVISE,
-	.get    = f2fs_xattr_advise_get,
-	.set    = f2fs_xattr_advise_set,
+	.get	= f2fs_xattr_advise_get,
+	.set	= f2fs_xattr_advise_set,
 };
 
 const struct xattr_handler f2fs_xattr_security_handler = {
@@ -425,7 +425,7 @@ static int read_all_xattrs(struct inode *inode, struct page *ipage,
 	*base_addr = txattr_addr;
 	return 0;
 fail:
-	kvfree(txattr_addr);
+	kfree(txattr_addr);
 	return err;
 }
 
@@ -610,7 +610,7 @@ ssize_t f2fs_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size)
 	}
 	error = buffer_size - rest;
 cleanup:
-	kvfree(base_addr);
+	kfree(base_addr);
 	return error;
 }
 
@@ -750,7 +750,7 @@ static int __f2fs_setxattr(struct inode *inode, int index,
 	if (!error && S_ISDIR(inode->i_mode))
 		set_sbi_flag(F2FS_I_SB(inode), SBI_NEED_CP);
 exit:
-	kvfree(base_addr);
+	kfree(base_addr);
 	return error;
 }
 
