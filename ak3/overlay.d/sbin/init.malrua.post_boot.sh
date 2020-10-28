@@ -11,25 +11,26 @@ echo 85 85 > /proc/sys/kernel/sched_downmigrate
 rm -f /data/vendor/swap/swapfile 2>/dev/null
 sync
 
-# Zram settings
-swapoff /dev/block/zram0
-echo 1 > /sys/block/zram0/reset
-echo lz4 > /sys/block/zram0/comp_algorithm
-echo 2G > /sys/block/zram0/disksize
-echo 0 > /sys/block/zram0/mem_limit
-
-# Set swappiness reflecting the device's RAM size
-RamStr=$(cat /proc/meminfo | grep MemTotal)
-RamMB=$((${RamStr:16:8} / 1024))
-if [ $RamMB -le 6144 ]; then
-  echo 190 > /proc/sys/vm/rswappiness
-elif [ $RamMB -le 8192 ]; then
-  echo 160 > /proc/sys/vm/rswappiness
-else
-  echo 130 > /proc/sys/vm/rswappiness
+while [ ! -e /dev/block/vbswap0 ]; do
+  sleep 1
+done
+if ! grep -q vbswap /proc/swaps; then
+  # 4GB
+  echo 4294967296 > /sys/devices/virtual/block/vbswap0/disksize
+  # Set swappiness reflecting the device's RAM size
+  RamStr=$(cat /proc/meminfo | grep MemTotal)
+  RamMB=$((${RamStr:16:8} / 1024))
+  if [ $RamMB -le 6144 ]; then
+    echo 190 > /proc/sys/vm/rswappiness
+  elif [ $RamMB -le 8192 ]; then
+    echo 160 > /proc/sys/vm/rswappiness
+  else
+    echo 130 > /proc/sys/vm/rswappiness
+  fi
+  # System mkswap behaves incorrectly with vbswap
+  mkswap /dev/block/vbswap0
+  swapon /dev/block/vbswap0
 fi
-mkswap /dev/block/zram0
-swapon /dev/block/zram0
 
 # blkio
 echo 2000 > /dev/blkio/blkio.group_idle
