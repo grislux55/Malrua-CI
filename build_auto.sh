@@ -6,7 +6,11 @@ jobs="-j$(nproc --all)"
 
 ./build_clean.sh
 
-git clone --depth=1 https://github.com/kdrag0n/proton-clang.git
+git clone --no-checkout https://github.com/kdrag0n/proton-clang.git
+
+cd proton-clang
+git checkout 2d4e664f62af1703d8b601f685bf1f3e2b5478dd
+cd ..
 
 export ARCH=arm64
 export SUBARCH=arm64
