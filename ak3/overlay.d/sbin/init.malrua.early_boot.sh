@@ -1,7 +1,10 @@
 #!/system/bin/sh
 
 # Readahead boost
-find /sys/devices -name read_ahead_kb | while read node; do echo 2048 > $node; done
+for i in dm-0 sda sdb sdc sdd sde sdf ; do
+  [ -e /sys/block/$i/queue/iostats ] && echo 0 > /sys/block/$i/queue/iostats
+  [ -e /sys/block/$i/queue/read_ahead_kb ] && echo 2048 > /sys/block/$i/queue/read_ahead_kb
+done
 
 # Stune boost
 echo 1 > /dev/stune/schedtune.prefer_idle
