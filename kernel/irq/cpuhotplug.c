@@ -12,7 +12,6 @@
 #include <linux/ratelimit.h>
 #include <linux/irq.h>
 #include <linux/cpumask.h>
-#include <linux/sched/isolation.h>
 
 #include "internals.h"
 
@@ -214,20 +213,6 @@ void irq_migrate_all_off_this_cpu(void)
 	}
 }
 
-static bool hk_should_isolate(struct irq_data *data, unsigned int cpu)
-{
-	const struct cpumask *hk_mask;
-
-	if (!housekeeping_enabled(HK_FLAG_MANAGED_IRQ))
-		return false;
-
-	hk_mask = housekeeping_cpumask(HK_FLAG_MANAGED_IRQ);
-	if (cpumask_subset(irq_data_get_effective_affinity_mask(data), hk_mask))
-		return false;
-
-	return cpumask_test_cpu(cpu, hk_mask);
-}
-
 static void irq_restore_affinity_of_irq(struct irq_desc *desc, unsigned int cpu)
 {
 	struct irq_data *data = irq_desc_get_irq_data(desc);
@@ -245,11 +230,9 @@ static void irq_restore_affinity_of_irq(struct irq_desc *desc, unsigned int cpu)
 	/*
 	 * If the interrupt can only be directed to a single target
 	 * CPU then it is already assigned to a CPU in the affinity
-	 * mask. No point in trying to move it around unless the
-	 * isolation mechanism requests to move it to an upcoming
-	 * housekeeping CPU.
+	 * mask. No point in trying to move it around.
 	 */
-	if (!irqd_is_single_target(data) || hk_should_isolate(data, cpu))
+	if (!irqd_is_single_target(data))
 		irq_set_affinity_locked(data, affinity, false);
 }
 

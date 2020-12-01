@@ -51,7 +51,6 @@
 #include <linux/kthread.h>
 #include <linux/tick.h>
 #include <linux/rcupdate_wait.h>
-#include <linux/sched/isolation.h>
 
 #define CREATE_TRACE_POINTS
 
@@ -722,7 +721,7 @@ static int __noreturn rcu_tasks_kthread(void *arg)
 	int fract;
 
 	/* Run on housekeeping CPUs by default.  Sysadm can move if desired. */
-	housekeeping_affine(current, HK_FLAG_RCU);
+	housekeeping_affine(current);
 
 	/*
 	 * Each pass through the following loop makes one check for

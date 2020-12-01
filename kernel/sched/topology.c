@@ -4,7 +4,6 @@
  */
 #include <linux/sched.h>
 #include <linux/mutex.h>
-#include <linux/sched/isolation.h>
 
 #include "sched.h"
 
@@ -526,6 +525,21 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 
 	update_top_cache_domain(cpu);
 }
+
+/* Setup the mask of CPUs configured for isolated domains */
+static int __init isolated_cpu_setup(char *str)
+{
+	int ret;
+
+	alloc_bootmem_cpumask_var(&cpu_isolated_map);
+	ret = cpulist_parse(str, cpu_isolated_map);
+	if (ret) {
+		pr_err("sched: Error, all isolcpus= values must be between 0 and %u\n", nr_cpu_ids);
+		return 0;
+	}
+	return 1;
+}
+__setup("isolcpus=", isolated_cpu_setup);
 
 struct s_data {
 	struct sched_domain * __percpu *sd;
@@ -1669,26 +1683,6 @@ void sched_domains_numa_masks_clear(unsigned int cpu)
 	}
 }
 
-/*
- * sched_numa_find_closest() - given the NUMA topology, find the cpu
- *                             closest to @cpu from @cpumask.
- * cpumask: cpumask to find a cpu from
- * cpu: cpu to be close to
- *
- * returns: cpu, or nr_cpu_ids when nothing found.
- */
-int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
-{
-	int i, j = cpu_to_node(cpu);
-
-	for (i = 0; i < sched_domains_numa_levels; i++) {
-		cpu = cpumask_any_and(cpus, sched_domains_numa_masks[i][j]);
-		if (cpu < nr_cpu_ids)
-			return cpu;
-	}
-	return nr_cpu_ids;
-}
-
 #endif /* CONFIG_NUMA */
 
 static int __sdt_alloc(const struct cpumask *cpu_map)
@@ -2008,7 +2002,7 @@ int sched_init_domains(const struct cpumask *cpu_map)
 	doms_cur = alloc_sched_domains(ndoms_cur);
 	if (!doms_cur)
 		doms_cur = &fallback_doms;
-	cpumask_and(doms_cur[0], cpu_map, housekeeping_cpumask(HK_FLAG_DOMAIN));
+	cpumask_andnot(doms_cur[0], cpu_map, cpu_isolated_map);
 	err = build_sched_domains(doms_cur[0], NULL);
 	register_sched_domain_sysctl();
 
@@ -2091,8 +2085,7 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 		doms_new = alloc_sched_domains(1);
 		if (doms_new) {
 			n = 1;
-			cpumask_and(doms_new[0], cpu_active_mask,
-				    housekeeping_cpumask(HK_FLAG_DOMAIN));
+			cpumask_andnot(doms_new[0], cpu_active_mask, cpu_isolated_map);
 		}
 	} else {
 		n = ndoms_new;
@@ -2115,8 +2108,7 @@ match1:
 	if (!doms_new) {
 		n = 0;
 		doms_new = &fallback_doms;
-		cpumask_and(doms_new[0], cpu_active_mask,
-			    housekeeping_cpumask(HK_FLAG_DOMAIN));
+		cpumask_andnot(doms_new[0], cpu_active_mask, cpu_isolated_map);
 	}
 
 	/* Build new domains: */

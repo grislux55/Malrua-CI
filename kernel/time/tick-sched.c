@@ -176,6 +176,7 @@ static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
 
 #ifdef CONFIG_NO_HZ_FULL
 cpumask_var_t tick_nohz_full_mask;
+cpumask_var_t housekeeping_mask;
 bool tick_nohz_full_running;
 static atomic_t tick_dep_mask;
 
@@ -395,13 +396,20 @@ out:
 	local_irq_restore(flags);
 }
 
-/* Get the boot-time nohz CPU list from the kernel parameters. */
-void __init tick_nohz_full_setup(cpumask_var_t cpumask)
+/* Parse the boot-time nohz CPU list from the kernel parameters. */
+static int __init tick_nohz_full_setup(char *str)
 {
 	alloc_bootmem_cpumask_var(&tick_nohz_full_mask);
-	cpumask_copy(tick_nohz_full_mask, cpumask);
+	if (cpulist_parse(str, tick_nohz_full_mask) < 0) {
+		pr_warn("NO_HZ: Incorrect nohz_full cpumask\n");
+		free_bootmem_cpumask_var(tick_nohz_full_mask);
+		return 1;
+	}
 	tick_nohz_full_running = true;
+
+	return 1;
 }
+__setup("nohz_full=", tick_nohz_full_setup);
 
 static int tick_nohz_cpu_down(unsigned int cpu)
 {
@@ -415,12 +423,37 @@ static int tick_nohz_cpu_down(unsigned int cpu)
 	return 0;
 }
 
+static int tick_nohz_init_all(void)
+{
+	int err = -1;
+
+#ifdef CONFIG_NO_HZ_FULL_ALL
+	if (!alloc_cpumask_var(&tick_nohz_full_mask, GFP_KERNEL)) {
+		WARN(1, "NO_HZ: Can't allocate full dynticks cpumask\n");
+		return err;
+	}
+	err = 0;
+	cpumask_setall(tick_nohz_full_mask);
+	tick_nohz_full_running = true;
+#endif
+	return err;
+}
+
 void __init tick_nohz_init(void)
 {
 	int cpu, ret;
 
-	if (!tick_nohz_full_running)
+	if (!tick_nohz_full_running) {
+		if (tick_nohz_init_all() < 0)
+			return;
+	}
+
+	if (!alloc_cpumask_var(&housekeeping_mask, GFP_KERNEL)) {
+		WARN(1, "NO_HZ: Can't allocate not-full dynticks cpumask\n");
+		cpumask_clear(tick_nohz_full_mask);
+		tick_nohz_full_running = false;
 		return;
+	}
 
 	/*
 	 * Full dynticks uses irq work to drive the tick rescheduling on safe
@@ -430,6 +463,7 @@ void __init tick_nohz_init(void)
 	if (!arch_irq_work_has_interrupt()) {
 		pr_warn("NO_HZ: Can't run full dynticks because arch doesn't support irq work self-IPIs\n");
 		cpumask_clear(tick_nohz_full_mask);
+		cpumask_copy(housekeeping_mask, cpu_possible_mask);
 		tick_nohz_full_running = false;
 		return;
 	}
@@ -442,6 +476,9 @@ void __init tick_nohz_init(void)
 		cpumask_clear_cpu(cpu, tick_nohz_full_mask);
 	}
 
+	cpumask_andnot(housekeeping_mask,
+		       cpu_possible_mask, tick_nohz_full_mask);
+
 	for_each_cpu(cpu, tick_nohz_full_mask)
 		context_tracking_cpu_set(cpu);
 
@@ -451,6 +488,12 @@ void __init tick_nohz_init(void)
 	WARN_ON(ret < 0);
 	pr_info("NO_HZ: Full dynticks CPUs: %*pbl.\n",
 		cpumask_pr_args(tick_nohz_full_mask));
+
+	/*
+	 * We need at least one CPU to handle housekeeping work such
+	 * as timekeeping, unbound timers, workqueues, ...
+	 */
+	WARN_ON_ONCE(cpumask_empty(housekeeping_mask));
 }
 #endif
 
@@ -473,16 +516,9 @@ static int __init setup_tick_nohz(char *str)
 
 __setup("nohz=", setup_tick_nohz);
 
-bool tick_nohz_tick_stopped(void)
+int tick_nohz_tick_stopped(void)
 {
 	return __this_cpu_read(tick_cpu_sched.tick_stopped);
-}
-
-bool tick_nohz_tick_stopped_cpu(int cpu)
-{
-	struct tick_sched *ts = per_cpu_ptr(&tick_cpu_sched, cpu);
-
-	return ts->tick_stopped;
 }
 
 /**
@@ -722,6 +758,12 @@ static ktime_t tick_nohz_next_event(struct tick_sched *ts, int cpu)
 	if (cpu != tick_do_timer_cpu &&
 	    (tick_do_timer_cpu != TICK_DO_TIMER_NONE || !ts->do_timer_last))
 		delta = KTIME_MAX;
+
+#ifdef CONFIG_NO_HZ_FULL
+	/* Limit the tick delta to the maximum scheduler deferment */
+	if (!ts->inidle)
+		delta = min(delta, scheduler_tick_max_deferment());
+#endif
 
 	/* Calculate the next expiry time */
 	if (delta < (KTIME_MAX - basemono))
@@ -1206,7 +1248,7 @@ static inline void tick_nohz_activate(struct tick_sched *ts, int mode)
 	ts->nohz_mode = mode;
 	/* One update is enough */
 	if (!test_and_set_bit(0, &tick_nohz_active))
-		timers_update_nohz();
+		timers_update_migration(true);
 }
 
 /**

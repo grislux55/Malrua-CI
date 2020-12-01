@@ -644,7 +644,7 @@ struct dl_rq {
 	/*
 	 * Deadline values of the currently executing and the
 	 * earliest ready task on this rq. Caching these facilitates
-	 * the decision whether or not a ready but not running task
+	 * the decision wether or not a ready but not running task
 	 * should migrate somewhere else.
 	 */
 	struct {
@@ -805,9 +805,11 @@ struct rq {
 	unsigned long last_load_update_tick;
 	unsigned long last_blocked_load_update_tick;
 #endif /* CONFIG_SMP */
-	atomic_t nohz_flags;
+	unsigned long nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
-
+#ifdef CONFIG_NO_HZ_FULL
+	unsigned long last_sched_tick;
+#endif
 	/* capture load from *all* tasks on this cpu: */
 	struct load_weight load;
 	unsigned long nr_load_updates;
@@ -1206,18 +1208,16 @@ enum numa_topology_type {
 extern enum numa_topology_type sched_numa_topology_type;
 extern int sched_max_numa_distance;
 extern bool find_numa_distance(int distance);
+#endif
+
+#ifdef CONFIG_NUMA
 extern void sched_init_numa(void);
 extern void sched_domains_numa_masks_set(unsigned int cpu);
 extern void sched_domains_numa_masks_clear(unsigned int cpu);
-extern int sched_numa_find_closest(const struct cpumask *cpus, int cpu);
 #else
 static inline void sched_init_numa(void) { }
 static inline void sched_domains_numa_masks_set(unsigned int cpu) { }
 static inline void sched_domains_numa_masks_clear(unsigned int cpu) { }
-static inline int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
-{
-	return nr_cpu_ids;
-}
 #endif
 
 #ifdef CONFIG_NUMA_BALANCING
@@ -1455,7 +1455,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 #ifdef CONFIG_SMP
 	/*
 	 * After ->cpu is set up to a new value, task_rq_lock(p, ...) can be
-	 * successfully executed on another CPU. We must ensure that updates of
+	 * successfuly executed on another CPU. We must ensure that updates of
 	 * per-task data have been completed by this moment.
 	 */
 	smp_wmb();
@@ -1866,7 +1866,6 @@ extern void post_init_entity_util_avg(struct sched_entity *se);
 
 #ifdef CONFIG_NO_HZ_FULL
 extern bool sched_can_stop_tick(struct rq *rq);
-extern int __init sched_tick_offload_init(void);
 
 /*
  * Tick may be needed by tasks in the runqueue depending on their policy and
@@ -1891,7 +1890,6 @@ static inline void sched_update_tick_dependency(struct rq *rq)
 		tick_nohz_dep_set_cpu(cpu, TICK_DEP_BIT_SCHED);
 }
 #else
-static inline int sched_tick_offload_init(void) { return 0; }
 static inline void sched_update_tick_dependency(struct rq *rq) { }
 #endif
 
@@ -1918,6 +1916,13 @@ static inline void sub_nr_running(struct rq *rq, unsigned count)
 	rq->nr_running -= count;
 	/* Check if we still need preemption */
 	sched_update_tick_dependency(rq);
+}
+
+static inline void rq_last_tick_reset(struct rq *rq)
+{
+#ifdef CONFIG_NO_HZ_FULL
+	rq->last_sched_tick = jiffies;
+#endif
 }
 
 extern void activate_task(struct rq *rq, struct task_struct *p, int flags);
@@ -2425,13 +2430,11 @@ extern void cfs_bandwidth_usage_inc(void);
 extern void cfs_bandwidth_usage_dec(void);
 
 #ifdef CONFIG_NO_HZ_COMMON
-#define NOHZ_TICK_STOPPED_BIT	0
-#define NOHZ_BALANCE_KICK_BIT	1
-#define NOHZ_STATS_KICK_BIT	2
-
-#define NOHZ_TICK_STOPPED	BIT(NOHZ_TICK_STOPPED_BIT)
-#define NOHZ_BALANCE_KICK	BIT(NOHZ_BALANCE_KICK_BIT)
-#define NOHZ_STATS_KICK	BIT(NOHZ_STATS_KICK_BIT)
+enum rq_nohz_flag_bits {
+	NOHZ_TICK_STOPPED,
+	NOHZ_BALANCE_KICK,
+	NOHZ_STATS_KICK
+};
 
 #define nohz_flags(cpu)	(&cpu_rq(cpu)->nohz_flags)
 

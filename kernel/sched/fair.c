@@ -33,7 +33,6 @@
 #include <linux/mempolicy.h>
 #include <linux/migrate.h>
 #include <linux/task_work.h>
-#include <linux/sched/isolation.h>
 
 #include <trace/events/sched.h>
 
@@ -813,9 +812,9 @@ void init_entity_runnable_average(struct sched_entity *se)
 	 */
 	sa->period_contrib = 1023;
 	/*
-	 * Tasks are initialized with full load to be seen as heavy tasks until
+	 * Tasks are intialized with full load to be seen as heavy tasks until
 	 * they get a chance to stabilize to their real load level.
-	 * Group entities are initialized with zero load to reflect the fact that
+	 * Group entities are intialized with zero load to reflect the fact that
 	 * nothing has been attached to the task group yet.
 	 */
 	if (entity_is_task(se))
@@ -4143,8 +4142,8 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	/*
 	 * When dequeuing a sched_entity, we must:
 	 *   - Update loads to have both entity and cfs_rq synced with now.
-	 *   - Subtract its load from the cfs_rq->runnable_avg.
-	 *   - Subtract its previous weight from cfs_rq->load.weight.
+	 *   - Substract its load from the cfs_rq->runnable_avg.
+	 *   - Substract its previous weight from cfs_rq->load.weight.
 	 *   - For group entity, update its weight to reflect the new share
 	 *     of its group cfs_rq.
 	 */
@@ -7186,7 +7185,7 @@ static int select_idle_core(struct task_struct *p, struct sched_domain *sd, int 
 		bool idle = true;
 
 		for_each_cpu(cpu, cpu_smt_mask(core)) {
-			__cpumask_clear_cpu(cpu, cpus);
+			cpumask_clear_cpu(cpu, cpus);
 			if (!idle_cpu(cpu))
 				idle = false;
 		}
@@ -11278,8 +11277,8 @@ more_balance:
 		 */
 		if ((env.flags & LBF_DST_PINNED) && env.imbalance > 0) {
 
-			/* Prevent to re-select dst_cpu via env's CPUs */
-			__cpumask_clear_cpu(env.dst_cpu, env.cpus);
+			/* Prevent to re-select dst_cpu via env's cpus */
+			cpumask_clear_cpu(env.dst_cpu, env.cpus);
 
 			env.dst_rq	 = cpu_rq(env.new_dst_cpu);
 			env.dst_cpu	 = env.new_dst_cpu;
@@ -11306,7 +11305,7 @@ more_balance:
 
 		/* All tasks on this runqueue were pinned by CPU affinity */
 		if (unlikely(env.flags & LBF_ALL_PINNED)) {
-			__cpumask_clear_cpu(cpu_of(busiest), cpus);
+			cpumask_clear_cpu(cpu_of(busiest), cpus);
 			/*
 			 * Attempting to continue load balancing at the current
 			 * sched_domain level only makes sense if there are
@@ -11851,7 +11850,6 @@ static inline int find_new_ilb(void)
  */
 static void nohz_balancer_kick(bool only_update)
 {
-	unsigned int flags;
 	int ilb_cpu;
 
 	nohz.next_balance++;
@@ -11861,12 +11859,11 @@ static void nohz_balancer_kick(bool only_update)
 	if (ilb_cpu >= nr_cpu_ids)
 		return;
 
-	flags = atomic_fetch_or(NOHZ_BALANCE_KICK, nohz_flags(ilb_cpu));
-	if (flags & NOHZ_BALANCE_KICK)
+	if (test_and_set_bit(NOHZ_BALANCE_KICK, nohz_flags(ilb_cpu)))
 		return;
 
 	if (only_update)
-		atomic_or(NOHZ_STATS_KICK, nohz_flags(ilb_cpu));
+		set_bit(NOHZ_STATS_KICK, nohz_flags(ilb_cpu));
 
 	/*
 	 * Use smp_send_reschedule() instead of resched_cpu().
@@ -11881,9 +11878,7 @@ static void nohz_balancer_kick(bool only_update)
 
 void nohz_balance_exit_idle(unsigned int cpu)
 {
-	unsigned int flags = atomic_read(nohz_flags(cpu));
-
-	if (unlikely(flags & NOHZ_TICK_STOPPED)) {
+	if (unlikely(test_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu)))) {
 		/*
 		 * Completely isolated CPUs don't ever set, so we must test.
 		 */
@@ -11891,8 +11886,7 @@ void nohz_balance_exit_idle(unsigned int cpu)
 			cpumask_clear_cpu(cpu, nohz.idle_cpus_mask);
 			atomic_dec(&nohz.nr_cpus);
 		}
-
-		atomic_andnot(NOHZ_TICK_STOPPED, nohz_flags(cpu));
+		clear_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu));
 	}
 }
 
@@ -11943,10 +11937,10 @@ void nohz_balance_enter_idle(int cpu)
 		return;
 
 	/* Spare idle load balancing on CPUs that don't want to be disturbed: */
-	if (!housekeeping_cpu(cpu, HK_FLAG_SCHED))
+	if (!is_housekeeping_cpu(cpu))
 		return;
 
-	if (atomic_read(nohz_flags(cpu)) & NOHZ_TICK_STOPPED)
+	if (test_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu)))
 		return;
 
 	/*
@@ -11957,7 +11951,7 @@ void nohz_balance_enter_idle(int cpu)
 
 	cpumask_set_cpu(cpu, nohz.idle_cpus_mask);
 	atomic_inc(&nohz.nr_cpus);
-	atomic_or(NOHZ_TICK_STOPPED, nohz_flags(cpu));
+	set_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu));
 }
 #else
 static inline void nohz_balancer_kick(bool only_update) {}
@@ -12112,10 +12106,8 @@ static void nohz_idle_balance(struct rq *this_rq, enum cpu_idle_type idle)
 	int update_next_balance = 0;
 	cpumask_t cpus;
 
-	if (!(atomic_read(nohz_flags(this_cpu)) & NOHZ_BALANCE_KICK))
-		return;
-
-	if (idle != CPU_IDLE)
+	if (idle != CPU_IDLE ||
+	    !test_bit(NOHZ_BALANCE_KICK, nohz_flags(this_cpu)))
 		goto end;
 
 	/*
@@ -12170,7 +12162,7 @@ static void nohz_idle_balance(struct rq *this_rq, enum cpu_idle_type idle)
 			 * of idle CPUs (which we have just done for
 			 * balance_cpu). In that case skip the actual balance.
 			 */
-			if (!(atomic_read(nohz_flags(this_cpu)) & NOHZ_STATS_KICK))
+			if (!test_bit(NOHZ_STATS_KICK, nohz_flags(this_cpu)))
 				rebalance_domains(rq, idle);
 		}
 
@@ -12188,7 +12180,7 @@ static void nohz_idle_balance(struct rq *this_rq, enum cpu_idle_type idle)
 	if (likely(update_next_balance))
 		nohz.next_balance = next_balance;
 end:
-	atomic_andnot(NOHZ_BALANCE_KICK, nohz_flags(this_cpu));
+	clear_bit(NOHZ_BALANCE_KICK, nohz_flags(this_cpu));
 }
 
 /*
@@ -12324,9 +12316,9 @@ static __latent_entropy void run_rebalance_domains(struct softirq_action *h)
 	nohz_idle_balance(this_rq, idle);
 	update_blocked_averages(this_rq->cpu);
 #ifdef CONFIG_NO_HZ_COMMON
-	if (!(atomic_read(nohz_flags(this_rq->cpu)) & NOHZ_STATS_KICK))
+	if (!test_bit(NOHZ_STATS_KICK, nohz_flags(this_rq->cpu)))
 		rebalance_domains(this_rq, idle);
-	atomic_andnot(NOHZ_STATS_KICK, nohz_flags(this_rq->cpu));
+	clear_bit(NOHZ_STATS_KICK, nohz_flags(this_rq->cpu));
 #else
 	rebalance_domains(this_rq, idle);
 #endif
@@ -12369,12 +12361,7 @@ static void rq_offline_fair(struct rq *rq)
 #endif /* CONFIG_SMP */
 
 /*
- * scheduler tick hitting a task of our scheduling class.
- *
- * NOTE: This function can be called remotely by the tick offload that
- * goes along full dynticks. Therefore no local assumption can be made
- * and everything must be accessed through the @rq and @curr passed in
- * parameters.
+ * scheduler tick hitting a task of our scheduling class:
  */
 static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 {

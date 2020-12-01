@@ -175,7 +175,7 @@ struct task_group;
  * TASK_RUNNING store which can collide with __set_current_state(TASK_RUNNING).
  *
  * However, with slightly different timing the wakeup TASK_RUNNING store can
- * also collide with the TASK_UNINTERRUPTIBLE store. Losing that store is not
+ * also collide with the TASK_UNINTERRUPTIBLE store. Loosing that store is not
  * a problem either because that will result in one extra go around the loop
  * and our @cond test will save the day.
  *
@@ -220,6 +220,8 @@ enum migrate_types {
 	GROUP_TO_RQ,
 	RQ_TO_GROUP,
 };
+
+extern cpumask_var_t			cpu_isolated_map;
 
 #ifdef CONFIG_HOTPLUG_CPU
 extern int sched_isolate_count(const cpumask_t *mask, bool include_offline);
@@ -653,7 +655,7 @@ struct sched_dl_entity {
 
 	/*
 	 * Actual scheduling parameters. Initialized with the values above,
-	 * they are continuously updated during task execution. Note that
+	 * they are continously updated during task execution. Note that
 	 * the remaining runtime could be < 0 in case we are in overrun.
 	 */
 	s64				runtime;	/* Remaining runtime for this instance	*/

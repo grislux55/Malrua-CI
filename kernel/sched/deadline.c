@@ -695,7 +695,7 @@ static void replenish_dl_entity(struct sched_dl_entity *dl_se,
  * refill the runtime and set the deadline a period in the future,
  * because keeping the current (absolute) deadline of the task would
  * result in breaking guarantees promised to other tasks (refer to
- * Documentation/scheduler/sched-deadline.txt for more information).
+ * Documentation/scheduler/sched-deadline.txt for more informations).
  *
  * This function returns true if:
  *
@@ -1718,14 +1718,6 @@ static void put_prev_task_dl(struct rq *rq, struct task_struct *p)
 		enqueue_pushable_dl_task(rq, p);
 }
 
-/*
- * scheduler tick hitting a task of our scheduling class.
- *
- * NOTE: This function can be called remotely by the tick offload that
- * goes along full dynticks. Therefore no local assumption can be made
- * and everything must be accessed through the @rq and @curr passed in
- * parameters.
- */
 static void task_tick_dl(struct rq *rq, struct task_struct *p, int queued)
 {
 	update_curr_dl(rq);

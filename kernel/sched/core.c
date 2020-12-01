@@ -31,7 +31,6 @@
 #include <linux/delay.h>
 
 #include <linux/kthread.h>
-#include <linux/sched/isolation.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -92,6 +91,9 @@ __read_mostly int scheduler_running;
  * default: 0.95s
  */
 int sysctl_sched_rt_runtime = 950000;
+
+/* CPUs with isolated domains */
+cpumask_var_t cpu_isolated_map;
 
 /*
  * __task_rq_lock - lock the rq @p resides on.
@@ -541,7 +543,7 @@ int get_nohz_timer_target(void)
 	int i, cpu = smp_processor_id();
 	struct sched_domain *sd;
 
-	if (!idle_cpu(cpu) && housekeeping_cpu(cpu, HK_FLAG_TIMER))
+	if (!idle_cpu(cpu) && is_housekeeping_cpu(cpu))
 		return cpu;
 
 	rcu_read_lock();
@@ -550,15 +552,15 @@ int get_nohz_timer_target(void)
 			if (cpu == i)
 				continue;
 
-			if (!idle_cpu(i) && housekeeping_cpu(i, HK_FLAG_TIMER)) {
+			if (!idle_cpu(i) && is_housekeeping_cpu(i)) {
 				cpu = i;
 				goto unlock;
 			}
 		}
 	}
 
-	if (!housekeeping_cpu(cpu, HK_FLAG_TIMER))
-		cpu = housekeeping_any_cpu(HK_FLAG_TIMER);
+	if (!is_housekeeping_cpu(cpu))
+		cpu = housekeeping_any_cpu();
 unlock:
 	rcu_read_unlock();
 	return cpu;
@@ -622,7 +624,7 @@ static inline bool got_nohz_idle_kick(void)
 {
 	int cpu = smp_processor_id();
 
-	if (!(atomic_read(nohz_flags(cpu)) & NOHZ_BALANCE_KICK))
+	if (!test_bit(NOHZ_BALANCE_KICK, nohz_flags(cpu)))
 		return false;
 
 	if (idle_cpu(cpu) && !need_resched())
@@ -632,7 +634,7 @@ static inline bool got_nohz_idle_kick(void)
 	 * We can't run Idle Load Balance on this CPU for this time so we
 	 * cancel it and clear NOHZ_BALANCE_KICK
 	 */
-	atomic_andnot(NOHZ_BALANCE_KICK, nohz_flags(cpu));
+	clear_bit(NOHZ_BALANCE_KICK, nohz_flags(cpu));
 	return false;
 }
 
@@ -2982,7 +2984,7 @@ unsigned long nr_running(void)
  * preemption, thus the result might have a time-of-check-to-time-of-use
  * race.  The caller is responsible to use it correctly, for example:
  *
- * - from a non-preemptible section (of course)
+ * - from a non-preemptable section (of course)
  *
  * - from a thread that is bound to a single CPU
  *
@@ -3207,6 +3209,7 @@ void scheduler_tick(void)
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
 #endif
+	rq_last_tick_reset(rq);
 
 	rcu_read_lock();
 	grp = task_related_thread_group(curr);
@@ -3219,96 +3222,31 @@ void scheduler_tick(void)
 }
 
 #ifdef CONFIG_NO_HZ_FULL
-
-struct tick_work {
-	int			cpu;
-	struct delayed_work	work;
-};
-
-static struct tick_work __percpu *tick_work_cpu;
-
-static void sched_tick_remote(struct work_struct *work)
+/**
+ * scheduler_tick_max_deferment
+ *
+ * Keep at least one tick per second when a single
+ * active task is running because the scheduler doesn't
+ * yet completely support full dynticks environment.
+ *
+ * This makes sure that uptime, CFS vruntime, load
+ * balancing, etc... continue to move forward, even
+ * with a very low granularity.
+ *
+ * Return: Maximum deferment in nanoseconds.
+ */
+u64 scheduler_tick_max_deferment(void)
 {
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct tick_work *twork = container_of(dwork, struct tick_work, work);
-	int cpu = twork->cpu;
-	struct rq *rq = cpu_rq(cpu);
-	struct rq_flags rf;
+	struct rq *rq = this_rq();
+	unsigned long next, now = READ_ONCE(jiffies);
 
-	/*
-	 * Handle the tick only if it appears the remote CPU is running in full
-	 * dynticks mode. The check is racy by nature, but missing a tick or
-	 * having one too much is no big deal because the scheduler tick updates
-	 * statistics and checks timeslices in a time-independent way, regardless
-	 * of when exactly it is running.
-	 */
-	if (!idle_cpu(cpu) && tick_nohz_tick_stopped_cpu(cpu)) {
-		struct task_struct *curr;
-		u64 delta;
+	next = rq->last_sched_tick + HZ;
 
-		rq_lock_irq(rq, &rf);
-		update_rq_clock(rq);
-		curr = rq->curr;
-		delta = rq_clock_task(rq) - curr->se.exec_start;
+	if (time_before_eq(next, now))
+		return 0;
 
-		/*
-		 * Make sure the next tick runs within a reasonable
-		 * amount of time.
-		 */
-		WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 3);
-		curr->sched_class->task_tick(rq, curr, 0);
-		rq_unlock_irq(rq, &rf);
-	}
-
-	/*
-	 * Run the remote tick once per second (1Hz). This arbitrary
-	 * frequency is large enough to avoid overload but short enough
-	 * to keep scheduler internal stats reasonably up to date.
-	 */
-	queue_delayed_work(system_unbound_wq, dwork, HZ);
+	return jiffies_to_nsecs(next - now);
 }
-
-static void sched_tick_start(int cpu)
-{
-	struct tick_work *twork;
-
-	if (housekeeping_cpu(cpu, HK_FLAG_TICK))
-		return;
-
-	WARN_ON_ONCE(!tick_work_cpu);
-
-	twork = per_cpu_ptr(tick_work_cpu, cpu);
-	twork->cpu = cpu;
-	INIT_DELAYED_WORK(&twork->work, sched_tick_remote);
-	queue_delayed_work(system_unbound_wq, &twork->work, HZ);
-}
-
-#ifdef CONFIG_HOTPLUG_CPU
-static void sched_tick_stop(int cpu)
-{
-	struct tick_work *twork;
-
-	if (housekeeping_cpu(cpu, HK_FLAG_TICK))
-		return;
-
-	WARN_ON_ONCE(!tick_work_cpu);
-
-	twork = per_cpu_ptr(tick_work_cpu, cpu);
-	cancel_delayed_work_sync(&twork->work);
-}
-#endif /* CONFIG_HOTPLUG_CPU */
-
-int __init sched_tick_offload_init(void)
-{
-	tick_work_cpu = alloc_percpu(struct tick_work);
-	BUG_ON(!tick_work_cpu);
-
-	return 0;
-}
-
-#else /* !CONFIG_NO_HZ_FULL */
-static inline void sched_tick_start(int cpu) { }
-static inline void sched_tick_stop(int cpu) { }
 #endif
 
 #if defined(CONFIG_PREEMPT) && (defined(CONFIG_DEBUG_PREEMPT) || \
@@ -6220,7 +6158,7 @@ int sched_unisolate_cpu_unlocked(int cpu)
 		stop_cpus(cpumask_of(cpu), do_unisolation_work_cpu_stop, 0);
 
 		/* Kick CPU to immediately do load balancing */
-		if (!atomic_fetch_or(NOHZ_BALANCE_KICK, nohz_flags(cpu)))
+		if (!test_and_set_bit(NOHZ_BALANCE_KICK, nohz_flags(cpu)))
 			smp_send_reschedule(cpu);
 	}
 
@@ -6424,7 +6362,6 @@ int sched_cpu_starting(unsigned int cpu)
 {
 	set_cpu_rq_start_time(cpu);
 	sched_rq_cpu_starting(cpu);
-	sched_tick_start(cpu);
 	clear_walt_request(cpu);
 	return 0;
 }
@@ -6437,7 +6374,6 @@ int sched_cpu_dying(unsigned int cpu)
 
 	/* Handle pending wakeups and then migrate everything off */
 	sched_ttwu_pending();
-	sched_tick_stop(cpu);
 
 	rq_lock_irqsave(rq, &rf);
 
@@ -6461,6 +6397,10 @@ int sched_cpu_dying(unsigned int cpu)
 
 void __init sched_init_smp(void)
 {
+	cpumask_var_t non_isolated_cpus;
+
+	alloc_cpumask_var(&non_isolated_cpus, GFP_KERNEL);
+
 	sched_init_numa();
 
 	/*
@@ -6472,16 +6412,20 @@ void __init sched_init_smp(void)
 	cpus_read_lock();
 	mutex_lock(&sched_domains_mutex);
 	sched_init_domains(cpu_active_mask);
+	cpumask_andnot(non_isolated_cpus, cpu_possible_mask, cpu_isolated_map);
+	if (cpumask_empty(non_isolated_cpus))
+		cpumask_set_cpu(smp_processor_id(), non_isolated_cpus);
 	mutex_unlock(&sched_domains_mutex);
 	cpus_read_unlock();
 
 	update_cluster_topology();
 
 	/* Move init over to a non-isolated CPU */
-	if (set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_FLAG_DOMAIN)) < 0)
+	if (set_cpus_allowed_ptr(current, non_isolated_cpus) < 0)
 		BUG();
 	cpumask_copy(&current->cpus_requested, cpu_possible_mask);
 	sched_init_granularity();
+	free_cpumask_var(non_isolated_cpus);
 
 	init_sched_rt_class();
 	init_sched_dl_class();
@@ -6491,7 +6435,7 @@ void __init sched_init_smp(void)
 
 static int __init migration_init(void)
 {
-	sched_cpu_starting(smp_processor_id());
+	sched_rq_cpu_starting(smp_processor_id());
 	return 0;
 }
 early_initcall(migration_init);
@@ -6659,7 +6603,10 @@ void __init sched_init(void)
 #ifdef CONFIG_NO_HZ_COMMON
 		rq->last_load_update_tick = jiffies;
 		rq->last_blocked_load_update_tick = jiffies;
-		atomic_set(&rq->nohz_flags, 0);
+		rq->nohz_flags = 0;
+#endif
+#ifdef CONFIG_NO_HZ_FULL
+		rq->last_sched_tick = 0;
 #endif
 #endif /* CONFIG_SMP */
 		init_rq_hrtick(rq);
@@ -6688,6 +6635,9 @@ void __init sched_init(void)
 	calc_load_update = jiffies + LOAD_FREQ;
 
 #ifdef CONFIG_SMP
+	/* May be allocated at isolcpus cmdline parse time */
+	if (cpu_isolated_map == NULL)
+		zalloc_cpumask_var(&cpu_isolated_map, GFP_NOWAIT);
 	idle_thread_set_boot_cpu();
 	set_cpu_rq_start_time(smp_processor_id());
 #endif
