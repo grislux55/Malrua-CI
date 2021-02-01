@@ -15,7 +15,14 @@ mkdir -p out
 echo
 echo "Setting DEFCONFIG....."
 echo 
-make CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip O=out "${1}"
+make CC=clang \
+     AR=llvm-ar \
+     AS=llvm-as \
+     NM=llvm-nm \
+     OBJCOPY=llvm-objcopy \
+     OBJDUMP=llvm-objdump \
+     STRIP=llvm-strip \
+     O=out "${1}"
 
 shift
 
@@ -23,7 +30,14 @@ echo
 echo "Building kernel......"
 echo 
 
-make CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip O=out "$@"
+make CC=clang \
+     AR=llvm-ar \
+     AS=llvm-as \
+     NM=llvm-nm \
+     OBJCOPY=llvm-objcopy \
+     OBJDUMP=llvm-objdump \
+     STRIP=llvm-strip \
+     O=out "$@"
 
 echo
 echo "Outputing kernel......"
