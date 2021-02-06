@@ -15,6 +15,7 @@
 #include <linux/compat.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/pm_qos.h>
 #include "kgsl_device.h"
 #include "kgsl_sync.h"
 #include "adreno.h"
