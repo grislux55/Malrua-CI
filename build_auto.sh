@@ -6,11 +6,7 @@ jobs="-j$(nproc --all)"
 
 ./build_clean.sh
 
-git clone --no-checkout https://github.com/kdrag0n/proton-clang.git
-
-cd proton-clang
-git checkout 2d4e664f62af1703d8b601f685bf1f3e2b5478dd
-cd ..
+git clone --depth=1 https://github.com/kdrag0n/proton-clang.git
 
 export ARCH=arm64
 export SUBARCH=arm64
@@ -21,4 +17,4 @@ export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
 echo "Compiling! (Using $jobs flag)"
 
-./build_kernel.sh malrua_defconfig "$jobs"
+./build_kernel.sh malrua_defconfig "$jobs" || exit 1

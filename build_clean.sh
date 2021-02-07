@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo
-echo "Clean Build Directory"
+echo "Cleaning build directory"
 echo
 
 git clean -fdx

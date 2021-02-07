@@ -22,7 +22,7 @@ make CC=clang \
      OBJCOPY=llvm-objcopy \
      OBJDUMP=llvm-objdump \
      STRIP=llvm-strip \
-     O=out "${1}"
+     O=out "${1}" || exit 1
 
 shift
 
@@ -37,7 +37,7 @@ make CC=clang \
      OBJCOPY=llvm-objcopy \
      OBJDUMP=llvm-objdump \
      STRIP=llvm-strip \
-     O=out "$@"
+     O=out "$@" || exit 1
 
 echo
 echo "Outputing kernel......"

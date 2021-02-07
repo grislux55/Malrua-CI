@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo
-echo "Pack the zip"
+echo "Packing zip"
 echo 
 
 VERSION="$(cat version)"
